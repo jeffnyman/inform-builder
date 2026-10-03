@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Inform front-end: run the locally built Inform 7 tools without hunting for them.
 
 Usage:  python inform.py <command> [args]
@@ -140,12 +141,12 @@ def cmd_where(t):
 def cmd_ide(t, args):
     if not t.ide_exe.exists():
         die(f"IDE not built at {t.ide_exe}: python build.py ide")
-    # Detach so this script can return while the IDE stays open.
-    flags = (
-        subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        if IS_WINDOWS
-        else 0
-    )
+    # Detach so this script can return while the IDE stays open. Tested with
+    # sys.platform rather than IS_WINDOWS so type checkers on other platforms
+    # know these Windows-only constants are not reached there.
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(
         [str(t.ide_exe)] + args, cwd=str(t.ide_exe.parent), creationflags=flags
     )

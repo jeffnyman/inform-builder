@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Inform easy builder: compile inweb, intest and the core Inform tools.
 
 On Windows this uses a portable toolchain (llvm-mingw clang + GNU make + the
