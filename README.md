@@ -153,7 +153,7 @@ where the executables live or what flags they want:
 | Command | What it does |
 |---|---|
 | `python inform.py where` | Shows which copy of each tool and which Internal folder will be used |
-| `python inform.py ide` | Launches the Windows IDE (`Build\Inform.exe`), detached |
+| `python inform.py ide` | Launches the IDE, detached: `Build\Inform.exe` on Windows, the `mac-integrate` app on macOS. Files given after it, such as a `.inform` project, are opened in it |
 | `python inform.py compile My.inform` | inform7 then inform6, exactly as the IDE does; output in `My.inform\Build\output.ulx`. `--z8` for the Z-machine, `--release` for a release build (and a Blorb if `Release.blurb` exists) |
 | `python inform.py play story.ulx` | Plays a story in the dumb-terminal glulxe or frotz (chosen by extension) |
 | `python inform.py inform7 ...` | Pass-through to inform7, inbuild, inform6, inblorb, intest or inweb. For inform7 and inbuild, `-internal` is filled in for you |
