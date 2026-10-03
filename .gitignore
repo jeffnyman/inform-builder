@@ -1,0 +1,16 @@
+# Downloaded by `python build.py setup` / `ide-libs`; about 1 GB and fully recreatable.
+# Includes the downloads/ cache and the portable 7-Zip.
+toolchain/
+
+# Build and test output written by build.py and inform.py.
+logs/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor and OS clutter
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
