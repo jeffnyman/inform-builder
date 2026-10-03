@@ -11,8 +11,10 @@ Usage:  python build.py <command> [options]
 
 Commands:
   doctor            Check prerequisites; show versions, paths and repo states.
-  setup             Download and unpack the portable toolchain (Windows only).
-  pins              Check the three repos out at the known-good commits (needs git).
+  setup             Download and unpack the portable toolchain (Windows); elsewhere,
+                    check that clang and make are installed.
+  pins              Check the three repos out at the known-good commits, cloning
+                    any that are missing into the work folder (needs git).
   inweb [--first]   Build inweb.  --first forces the upstream bootstrap script.
   intest [--first]  Build intest.
   inform [--first]  Build the core Inform tools (about 3.5 minutes).
@@ -237,8 +239,9 @@ def cmd_setup(work, plat):
                     f"{t} not found. Install it (e.g. `sudo apt install clang make`, "
                     f"or `xcode-select --install` on macOS)."
                 )
-        print(version_of("clang", work, "--version"))
-        print(version_of("make", work, "--version"))
+        # Run from here, not the work folder, which may not exist yet.
+        print(version_of("clang", HERE, "--version"))
+        print(version_of("make", HERE, "--version"))
         return
 
     dl = TOOLCHAIN / "downloads"
@@ -296,11 +299,15 @@ def need_toolchain():
         die("toolchain not present. Run: python build.py setup")
 
 
+def repo_url(name):
+    return f"https://github.com/ganelson/{name}.git"
+
+
 def need_repo(work, name):
     if not (work / name).is_dir():
         die(
-            f"no {name}/ in {work}. Clone it: "
-            f"git clone https://github.com/ganelson/{name}.git"
+            f"no {name}/ in {work}. Run `python build.py pins` to clone all three, "
+            f'or: git clone {repo_url(name)} "{work / name}"'
         )
 
 
@@ -1063,11 +1070,17 @@ def cmd_ide(work, plat, ide, toolset):
 def cmd_pins(work, plat):
     if not shutil.which("git"):
         die("git not found on PATH; pins needs git")
+    cloned = False
+    for name in PINS:
+        if not (work / name).is_dir():
+            say(f"Cloning {name} into {work / name}")
+            work.mkdir(parents=True, exist_ok=True)
+            run(["git", "clone", repo_url(name), str(work / name)], work)
+            cloned = True
     # inweb re-tangles its tracked Tangled/inweb.c on every build; discard that
     # so the checkout is not blocked by it.
     git(work / "inweb", "checkout", "--", "Tangled/inweb.c")
     for name, ref in PINS.items():
-        need_repo(work, name)
         say(f"{name} -> {ref}")
         if git(work / name, "fetch", "-q", "origin") is None:
             print("   (fetch failed; using local objects)")
@@ -1080,10 +1093,13 @@ def cmd_pins(work, plat):
                 or "?"
             )
         )
-    print(
-        "\nNow rebuild from scratch: python build.py inweb --first && "
-        "python build.py intest --first && python build.py inform --first"
-    )
+    if cloned:
+        print("\nNow build: python build.py all")
+    else:
+        print(
+            "\nNow rebuild from scratch: python build.py inweb --first && "
+            "python build.py intest --first && python build.py inform --first"
+        )
 
 
 def cmd_doctor(work, plat):
