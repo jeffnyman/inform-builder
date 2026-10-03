@@ -6,7 +6,9 @@ Usage:  python inform.py <command> [args]
 
 Commands:
   where                 Show which executables and Internal folder will be used.
-  ide                   Launch the Windows IDE (Build\\Inform.exe).
+  ide [files]           Launch the IDE: on Windows Build\\Inform.exe, on macOS the
+                        app made by `build.py mac-integrate`. Any files given (for
+                        example a .inform project) are opened in it.
   compile <project>     Compile a .inform project folder the way the IDE does:
                         inform7, then inform6, into <project>\\Build\\output.ulx.
                         Flags: --z8 (Z-machine instead of Glulx), --release
@@ -30,6 +32,7 @@ or force the second with --from-source.
 """
 
 import os
+import plistlib
 import subprocess
 import sys
 import uuid
@@ -38,11 +41,31 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 IS_WINDOWS = os.name == "nt"
 EXE = ".exe" if IS_WINDOWS else ""
+# Must match MAC_BUNDLE_ID in build.py, which gives the app this identifier.
+MAC_BUNDLE_ID = os.environ.get(
+    "MAC_BUNDLE_ID", "com.inform7.inform-compiler.source-build"
+)
 
 
 def die(msg, code=1):
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+def find_mac_app():
+    """The app `build.py mac-integrate` made, found by bundle identifier so that
+    --name and --out need not be repeated here. The newest wins if there are several."""
+    found = []
+    for folder in (Path.home() / "Applications", Path("/Applications")):
+        for app in folder.glob("*.app"):
+            plist = app / "Contents" / "Info.plist"
+            try:
+                with open(plist, "rb") as f:
+                    if plistlib.load(f).get("CFBundleIdentifier") == MAC_BUNDLE_ID:
+                        found.append(app)
+            except (OSError, ValueError):
+                pass
+    return max(found, key=lambda a: a.stat().st_mtime, default=None)
 
 
 class Tools:
@@ -68,7 +91,6 @@ class Tools:
                 )
             }
             self.exe["inweb"] = work / "inweb" / "Tangled" / f"inweb{EXE}"
-            self.ide_exe = ide / "Build" / f"Inform{EXE}"
         else:
             self.origin = "source trees (Tangled)"
             inform = work / "inform"
@@ -94,6 +116,9 @@ class Tools:
                 / "glulxe"
                 / f"glulxe{EXE}",
             }
+        if sys.platform == "darwin":
+            self.ide_exe = find_mac_app()
+        else:
             self.ide_exe = ide / "Build" / f"Inform{EXE}"
         # The IDE passes -external <Documents>\Inform; use it if the folder exists.
         docs = Path.home() / "Documents" / "Inform"
@@ -132,13 +157,26 @@ def cmd_where(t):
     )
     for name, p in t.exe.items():
         print(f"  {name:10} {p}  {'ok' if p.exists() else 'MISSING'}")
-    print(f"  {'IDE':10} {t.ide_exe}  {'ok' if t.ide_exe.exists() else 'not built'}")
+    if t.ide_exe:
+        state = "ok" if t.ide_exe.exists() else "not built"
+        print(f"  {'IDE':10} {t.ide_exe}  {state}")
+    else:
+        print(f"  {'IDE':10} (no mac-integrate app in ~/Applications or /Applications)")
     print(
         f"  {'external':10} {t.external or '(none; ~/Documents/Inform does not exist)'}"
     )
 
 
 def cmd_ide(t, args):
+    if sys.platform == "darwin":
+        if not t.ide_exe:
+            die(
+                "no app from `build.py mac-integrate` found: python build.py mac-integrate"
+            )
+        # open returns at once and the app stays up; files are opened as documents.
+        if run(["open", "-a", t.ide_exe] + args) != 0:
+            die(f"could not open {t.ide_exe}")
+        return
     if not t.ide_exe.exists():
         die(f"IDE not built at {t.ide_exe}: python build.py ide")
     # Detach so this script can return while the IDE stays open. Tested with
