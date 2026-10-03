@@ -80,12 +80,20 @@ refer to `../inweb/Tangled/inweb` and so on.
 ## Quick start
 
 ```
+cd inform-builder
+python build.py pins        # clones the three repos into ../_informing, at verified commits
+python build.py all         # setup + inweb + intest + inform + smoke test
+```
+
+`pins` creates the sources folder and clones whichever of the three repos are
+missing, then checks all three out at the combination recorded in `build.py`
+(see "Matching versions" below). To track upstream `master` instead, clone
+them yourself:
+
+```
 git clone https://github.com/ganelson/inweb.git  _informing/inweb
 git clone https://github.com/ganelson/intest.git _informing/intest
 git clone https://github.com/ganelson/inform.git _informing/inform
-cd inform-builder
-python build.py pins        # recommended: see "Matching versions" below
-python build.py all         # setup + inweb + intest + inform + smoke test
 ```
 
 Or step by step:
@@ -93,8 +101,8 @@ Or step by step:
 | Command | What it does | Time* |
 |---|---|---|
 | `python build.py doctor` | Checks prerequisites; shows toolchain versions and repo states | instant |
-| `python build.py setup` | Downloads and unpacks the toolchain (Windows only; idempotent) | download-bound |
-| `python build.py pins` | Checks the three repos out at the verified commit combination | seconds |
+| `python build.py setup` | Downloads and unpacks the toolchain on Windows (idempotent); on Linux and macOS, checks that `clang` and `make` are installed | download-bound |
+| `python build.py pins` | Clones any of the three repos that are missing, then checks them out at the verified commit combination | seconds; about a minute if cloning |
 | `python build.py inweb` | Builds inweb | 25 s |
 | `python build.py intest` | Builds intest | 15 s |
 | `python build.py inform` | Builds all core Inform tools and the test interpreters | 3.5 min |
