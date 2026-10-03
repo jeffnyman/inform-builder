@@ -4,7 +4,8 @@ One Python script that compiles the Inform 7 ecosystem — **inweb**, **intest**
 and the core **inform** tools (inform7, inbuild, inter, inblorb, inform6,
 inpolicy) — from source, on Windows, Linux or macOS. On Windows it can also
 feed that build into the **Windows Inform 7 IDE** and compile the IDE itself
-with the free Visual Studio Build Tools.
+with the free Visual Studio Build Tools. On macOS it can make a copy of the
+official **Mac Inform app** that runs the build, with no Xcode needed.
 
 The core tools build **without installing anything**: no MSYS2, no Cygwin, no
 WSL, no Visual Studio, not even Git for Windows. A portable toolchain is
@@ -18,6 +19,7 @@ python build.py integrate    # put them into a Windows-Inform7 checkout
 python build.py ide-libs     # fetch the IDE's third-party libraries
 python build.py ide          # compile Inform.exe with VS Build Tools
 python build.py ide-interpreters   # and the Story-tab interpreters
+python build.py mac-integrate      # macOS: a copy of Inform.app running them
 ```
 
 ## How it works
@@ -51,6 +53,9 @@ On Linux and macOS no toolchain is downloaded. The system `clang`, `make` and
 - Only for compiling the Windows IDE (`ide` command): Visual Studio Build Tools
   2022 or 2026 with MFC, plus about 1.5 GB more for libraries. See
   "Compiling the IDE itself" below.
+- Only for `mac-integrate`: the official Mac Inform app installed, normally at
+  `/Applications/Inform.app`. The Xcode command-line tools are enough; full
+  Xcode is not needed.
 
 ## Layout
 
@@ -96,6 +101,7 @@ Or step by step:
 | `python build.py test` | Compiles and plays the "Acidity" test case via intest | 2 s |
 | `python build.py test all` | The full suite, about 2500 cases | 5 min to 2 h |
 | `python build.py integrate` | Copies tools and resources into a Windows IDE checkout; see below | 3.5 min |
+| `python build.py mac-integrate` | macOS: makes a renamed, re-signed copy of `Inform.app` that runs this build; see below | 6 s |
 | `python build.py ide-libs` | Fetches the IDE's third-party libraries and helper repos; see below | download-bound |
 | `python build.py ide` | Compiles `Inform.exe` with MSBuild from Visual Studio Build Tools | 4 min |
 | `python build.py ide-interpreters` | Clones Frotz, Glulxe and Git and builds the Story-tab interpreters | 1 min |
@@ -211,8 +217,18 @@ Windows removed from PATH, so only Python and the downloaded toolchain were used
 | `Inform.exe` launched from `Build\` | Opens the "Welcome to Inform" launcher with no missing-component warning; CEF helper processes start |
 | `inform.py`: `where`, `ide`, `compile` (Glulx; Z-machine release with Blorb), `play` both, pass-through | All verified |
 | `test all` (full suite) | Not yet run |
-| Linux / macOS paths in `build.py` | Written, not yet exercised |
+| Linux paths in `build.py` | Written, not yet exercised |
 | `Build\Retrospective\` (legacy compilers for very old projects) | Not available from source; optional |
+
+On macOS 26.6 (Apple Silicon, Xcode command-line tools only, no full Xcode),
+2 October 2026:
+
+| Step | Result |
+|---|---|
+| `pins`, then `all` (inweb, intest, inform with Apple clang and make 3.81) | OK, 62 s; Acidity passed |
+| `mac-integrate` from the official Inform.app 1.82 | OK, 6 s: 7 tools, 293 Internal files, 1134 documentation pages; `codesign --verify --deep --strict` passes |
+| A project compiled and played with only the tools and `Internal` inside the new app | Passed; banner shows Inform 7 v10.2.0 |
+| The new app launched and used through its GUI | Worked in a hands-on check; no problems seen |
 
 ## Feeding the build into the Windows IDE
 
@@ -364,6 +380,69 @@ for opening very old projects. They are only available from an installed
 release of Windows Inform 7. Optional: without them the IDE simply cannot offer
 those legacy versions in a project's settings.
 
+## Feeding the build into the Mac app (`mac-integrate`)
+
+Building the Mac IDE from source (https://github.com/TobyLobster/Inform) needs
+full Xcode, a signing setup, and an "Inform Core" folder layout with a private
+makefile that its build script expects but the repository does not include.
+None of that is needed to *run* a new compiler in the Mac IDE, because the app
+finds its tools by name:
+
+- `Contents/MacOS/ni` is inform7 (under its old name), `cBlorb` is inblorb, and
+  `inform6` and `intest` keep their names.
+- `Contents/Resources/Internal` is passed to `ni` with `-internal`.
+- The documentation pages live in `Contents/Resources/en.lproj`.
+
+So a copy of the official app with those swapped is a Mac IDE running your
+build:
+
+```
+python build.py all
+python build.py mac-integrate
+open ~/Applications/"Inform 10.2.app"
+```
+
+`mac-integrate`:
+
+1. Copies `/Applications/Inform.app` (or `--app PATH`) into a temporary folder,
+   without its extended attributes.
+2. Deletes the copy's `Internal` folder and its HTML documentation pages. The
+   official 1.82 app's kits are for Inform 10.1, and if they are left in place
+   10.2 fails with "'Web Syntax Version' has been withdrawn". The app's own
+   `.strings` and `.nib` files are kept.
+3. Writes a `make-integration-settings.mk` beside `inform/` for the Mac layout
+   and runs upstream's `make forceintegration`, then removes the file again so
+   it does not affect later builds. It refuses to run if a settings file it did
+   not write is already there. The staging copy is used because upstream's
+   settings cannot contain paths with spaces.
+4. Renames the app (`--name`, default `Inform <major>.<minor>` from the built
+   inform7, for example "Inform 10.2") and gives it its own bundle identifier
+   (`--bundle-id`, default `com.inform7.inform-compiler.source-build`). That
+   keeps its preferences separate and lets you choose which app opens
+   `.inform` files.
+5. Signs the whole bundle ad hoc. Swapping files breaks Apple's signature, and
+   macOS kills a binary inside a bundle with a broken seal (exit code 137). An
+   ad hoc signature needs no Apple developer account and is valid on this Mac
+   only.
+6. Moves it to `--out DIR`, default `~/Applications`. A previous
+   `mac-integrate` build at that path is replaced; any other app there is left
+   alone and the command stops.
+
+Leave the official app installed: it is the source of the copy, and your
+fallback. Things to know when running both:
+
+- Both read `~/Library/Inform`, so an extension installed from one is seen by
+  the other. The path is fixed in the app, so back that folder up if you want
+  to try 10.2 extensions without risk to your 10.1 setup.
+- A project compiled under 10.2 may have its settings updated in a way the
+  official 10.1 app does not expect.
+- The GUI is still Inform.app 1.82, written for Inform 10.1.2. Compiling
+  through it is expected to work. Panels that read `Internal` directly
+  (extensions, index, documentation) are the most likely places for rough
+  edges.
+- The legacy compilers in `Contents/MacOS/6L02`, `6L38` and `6M62` are kept
+  from the official app unchanged.
+
 ## Troubleshooting
 
 **`python` opens the Microsoft Store or is not found.** Install Python from
@@ -391,6 +470,12 @@ its own C source on every build. Don't commit it unless you changed inweb.
 delete `toolchain/llvm-mingw`, run `python build.py setup`. The
 `toolchain/downloads` folder is only a cache and can be deleted at any time.
 
+**`mac-integrate` cannot replace the previous app: "Operation not
+permitted".** macOS App Management protection. Give your terminal App
+Management access in System Settings > Privacy & Security, or delete the old
+app in Finder and run the command again.
+
 ## Uninstall
 
-Delete the `inform-builder` folder. That is all.
+Delete the `inform-builder` folder. That is all. On macOS, also delete the
+app `mac-integrate` made (by default `~/Applications/Inform 10.2.app`).
