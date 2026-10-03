@@ -108,13 +108,13 @@ Or step by step:
 | `python build.py inform` | Builds all core Inform tools and the test interpreters | 3.5 min |
 | `python build.py test` | Compiles and plays the "Acidity" test case via intest | 2 s |
 | `python build.py test all` | The full suite, about 2500 cases | 5 min to 2 h |
-| `python build.py integrate` | Copies tools and resources into a Windows IDE checkout; see below | 3.5 min |
+| `python build.py integrate` | Windows: copies tools and resources into a Windows IDE checkout; see below | 3.5 min |
 | `python build.py mac-integrate` | macOS: makes a renamed, re-signed copy of `Inform.app` that runs this build; see below | 6 s |
-| `python build.py ide-libs` | Fetches the IDE's third-party libraries and helper repos; see below | download-bound |
-| `python build.py ide` | Compiles `Inform.exe` with MSBuild from Visual Studio Build Tools | 4 min |
-| `python build.py ide-interpreters` | Clones Frotz, Glulxe and Git and builds the Story-tab interpreters | 1 min |
-| `python build.py shell` | Opens a shell with the toolchain on PATH, in the sources folder | |
-| `python build.py env` | Prints PATH lines for your shell (`--ps`, `--cmd`, or POSIX) | |
+| `python build.py ide-libs` | Windows: fetches the IDE's third-party libraries and helper repos; see below | download-bound |
+| `python build.py ide` | Windows: compiles `Inform.exe` with MSBuild from Visual Studio Build Tools | 4 min |
+| `python build.py ide-interpreters` | Windows: clones Frotz, Glulxe and Git and builds the Story-tab interpreters | 1 min |
+| `python build.py shell` | Opens a shell in the sources folder with `INFORM_WORK` set, and on Windows the toolchain on PATH | |
+| `python build.py env` | Prints lines that set `INFORM_WORK`, and on Windows put the toolchain on PATH, for your shell (`--ps`, `--cmd`, or POSIX). On macOS and Linux: `eval "$(python build.py env)"` | |
 
 \* Measured on a desktop PC, 2 October 2026.
 
@@ -253,7 +253,7 @@ everything into `Build\`. The IDE's own `.gitignore` expects exactly that layout
 
 1. Creates directory junctions `Distribution\inweb`, `Distribution\intest` and
    `Distribution\inform` pointing at your source checkouts, so nothing is moved
-   or duplicated. (Symlinks on Linux/macOS. Existing folders are left alone.)
+   or duplicated. (Existing folders are left alone.)
 2. Runs `make` in `Distribution\inform` so the integration settings are active.
 3. Copies inform7, inbuild, inform6, inblorb, intest and the dumb-terminal frotz
    and glulxe into `Build\Compilers` **with `.exe` extensions**. The upstream
