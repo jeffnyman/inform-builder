@@ -20,6 +20,11 @@ Commands:
   integrate         Copy the built tools and resources into a Windows IDE checkout
                     (Build/Compilers, Build/Internal, Build/Documentation). Uses
                     --ide DIR, default <work>/Windows-Inform7.
+  mac-integrate     Copy the official Inform.app (--app PATH, default
+                    /Applications/Inform.app) with the built tools, Internal and
+                    documentation swapped in, renamed (--name, default e.g.
+                    "Inform 10.2") with its own bundle identifier (--bundle-id),
+                    signed ad hoc, into --out DIR (default ~/Applications).
   ide-libs          Fetch the third-party libraries and helper repos that
                     Inform7.exe needs, into the layout its project files expect.
   ide               Build Inform.exe with MSBuild from Visual Studio Build Tools
@@ -40,6 +45,7 @@ Requires Python 3.8 or later and nothing from PyPI.
 
 import os
 import platform
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -449,6 +455,159 @@ def cmd_integrate(work, plat, ide):
         "\nThe IDE launches <AppDir>\\Compilers\\inform7.exe with -internal <AppDir>\\Internal,"
     )
     print("so an Inform7.exe built from this checkout now runs the 10.2 compiler.")
+
+
+# --- macOS: feed the build into a copy of the installed Inform.app ----------
+# The Mac app looks its tools up by name in Contents/MacOS (inform7 is "ni",
+# inblorb is "cBlorb") and passes Contents/Resources/Internal to ni with
+# -internal. So a copy of the official app with those swapped is a Mac IDE
+# running this build, and no Xcode is needed. The copy gets its own name and
+# bundle identifier so it can sit beside the official app.
+
+MAC_APP_SOURCE = Path("/Applications/Inform.app")
+MAC_BUNDLE_ID = os.environ.get(
+    "MAC_BUNDLE_ID", "com.inform7.inform-compiler.source-build"
+)
+MAC_SETTINGS_MARKER = (
+    "# Written by inform-builder mac-integrate; removed when it finishes."
+)
+
+# Upstream's make-integration-settings.mk for this layout. The paths must not
+# contain spaces, so they point at a staging copy in a temporary folder.
+MAC_SETTINGS = """{marker}
+INTEGRATION = TRUE
+BUILTINCOMPS = {c}/MacOS
+INTERNAL = {c}/Resources/Internal
+BUILTINHTML = {c}/Resources
+BUILTINHTMLINNER = {c}/Resources/en.lproj
+ADVICEHTML = {c}/Resources/en.lproj
+INBLORBNAME = cBlorb
+INFORM6NAME = inform6
+INFORM7NAME = ni
+INTESTNAME = intest
+INBUILDNAME = inbuild
+FROTZNAME = dumb-frotz
+GLULXENAME = dumb-glulxe
+HTMLPLATFORM = macos
+"""
+
+
+def bundle_id_of(app):
+    try:
+        with open(app / "Contents" / "Info.plist", "rb") as f:
+            return plistlib.load(f).get("CFBundleIdentifier")
+    except (OSError, ValueError):
+        return None
+
+
+def cmd_mac_integrate(work, plat, app_src, out_dir, name, bundle_id):
+    if platform.system() != "Darwin":
+        die("mac-integrate is for macOS; on Windows use `integrate`")
+    for repo in ("inweb", "intest", "inform"):
+        need_repo(work, repo)
+    inform = work / "inform"
+    for _, rel in IDE_TOOLS:
+        if not (inform / rel).exists():
+            die(f"{inform / rel} missing; run `python build.py all` first")
+
+    app_src = Path(app_src) if app_src else MAC_APP_SOURCE
+    if not (app_src / "Contents" / "MacOS" / "ni").exists():
+        die(
+            f"no Inform.app at {app_src}. Install the official Mac app from "
+            "https://inform7.com, or pass --app PATH"
+        )
+    bundle_id = bundle_id or MAC_BUNDLE_ID
+    if bundle_id_of(app_src) == bundle_id:
+        die(
+            f"{app_src} is itself a mac-integrate build; point --app at the official app"
+        )
+
+    if not name:
+        ver = version_of(inform / "inform7/Tangled/inform7", inform)
+        nums = next((w for w in ver.split() if w[:1].isdigit()), "")
+        name = "Inform " + ".".join(nums.split("-")[0].split(".")[:2])
+    out_dir = Path(out_dir).expanduser() if out_dir else Path.home() / "Applications"
+    dest = out_dir / f"{name}.app"
+    if dest.exists() and bundle_id_of(dest) != bundle_id:
+        die(f"{dest} exists and was not made by mac-integrate; not overwriting it")
+
+    settings_file = work / "make-integration-settings.mk"
+    if settings_file.exists() and MAC_SETTINGS_MARKER not in settings_file.read_text(
+        encoding="utf-8"
+    ):
+        die(f"{settings_file} already exists and is not ours; move it aside first")
+
+    with tempfile.TemporaryDirectory(prefix="inform-mac-") as tmp:
+        stage = Path(tmp) / "Inform.app"
+        contents = stage / "Contents"
+        if " " in str(contents):
+            die(f"temporary folder {tmp} contains a space; set TMPDIR elsewhere")
+
+        say(f"Copying {app_src} to a staging folder")
+        # No extended attributes: quarantine and Finder info would break codesign.
+        run(["ditto", "--noextattr", "--noacl", str(app_src), str(stage)], work)
+
+        # The official app's Internal and HTML pages are for an older Inform. Its
+        # 10.1 kits in Internal/Inter make 10.2 fail with "Web Syntax Version has
+        # been withdrawn", so both are replaced rather than overlaid. The .strings
+        # and .nib files in en.lproj belong to the app and are kept.
+        shutil.rmtree(contents / "Resources" / "Internal", ignore_errors=True)
+        lproj = contents / "Resources" / "en.lproj"
+        for p in list(lproj.glob("*.html")) + [lproj / "xrefs.txt"]:
+            if p.exists():
+                p.unlink()
+
+        say(
+            "Transferring tools, Internal and documentation (upstream forceintegration)"
+        )
+        settings_file.write_text(
+            MAC_SETTINGS.format(marker=MAC_SETTINGS_MARKER, c=contents),
+            encoding="utf-8",
+        )
+        try:
+            run([tool("make"), "forceintegration"], inform)
+        finally:
+            settings_file.unlink()
+
+        say(f"Renaming to '{name}' with bundle identifier {bundle_id}")
+        plist_path = contents / "Info.plist"
+        with open(plist_path, "rb") as f:
+            info = plistlib.load(f)
+        info["CFBundleIdentifier"] = bundle_id
+        info["CFBundleName"] = name
+        info["CFBundleDisplayName"] = name
+        with open(plist_path, "wb") as f:
+            plistlib.dump(info, f)
+
+        # Changing files broke Apple's signature, and macOS kills a binary inside a
+        # bundle whose seal is broken. Sign the whole bundle ad hoc; this needs no
+        # Apple developer account and the app runs on this Mac only.
+        say("Signing ad hoc")
+        run(["codesign", "--force", "--deep", "--sign", "-", str(stage)], work)
+        run(["codesign", "--verify", "--deep", "--strict", str(stage)], work)
+
+        if dest.exists():
+            say(f"Replacing the previous build at {dest}")
+            try:
+                shutil.rmtree(dest)
+            except OSError as e:
+                die(
+                    f"could not remove {dest}: {e}\nIf this is 'Operation not permitted', "
+                    "give your terminal App Management access in System Settings > "
+                    "Privacy & Security, or delete the old app in Finder"
+                )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(stage), str(dest))
+
+    say("Result")
+    print(f"  {dest}")
+    print(f"  {version_of(dest / 'Contents/MacOS/ni', work)}")
+    print(f"  bundle identifier {bundle_id}")
+    print(
+        f"\nOpen it with: open '{dest}'\n"
+        "It shares ~/Library/Inform (installed extensions and documentation) with the\n"
+        "official app, so an extension installed in one is seen by the other."
+    )
 
 
 # --- Windows IDE: third-party libraries and MSBuild -------------------------
@@ -1041,6 +1200,7 @@ def main(argv):
     posix_shell = False
     ide = None
     toolset = None
+    app = out = name = bundle_id = None
     rest = []
     i = 0
     while i < len(args):
@@ -1057,6 +1217,18 @@ def main(argv):
         elif a == "--toolset":
             i += 1
             toolset = args[i]
+        elif a == "--app":
+            i += 1
+            app = args[i]
+        elif a == "--out":
+            i += 1
+            out = args[i]
+        elif a == "--name":
+            i += 1
+            name = args[i]
+        elif a == "--bundle-id":
+            i += 1
+            bundle_id = args[i]
         elif a == "--first":
             first = True
         elif a == "--ps":
@@ -1096,6 +1268,8 @@ def main(argv):
         cmd_test(work, plat, params[0] if params else "Acidity")
     elif cmd == "integrate":
         cmd_integrate(work, plat, ide)
+    elif cmd == "mac-integrate":
+        cmd_mac_integrate(work, plat, app, out, name, bundle_id)
     elif cmd == "ide-libs":
         cmd_ide_libs(work, plat, ide)
     elif cmd == "ide":
