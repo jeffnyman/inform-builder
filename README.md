@@ -228,7 +228,7 @@ On macOS 26.6 (Apple Silicon, Xcode command-line tools only, no full Xcode),
 | `pins`, then `all` (inweb, intest, inform with Apple clang and make 3.81) | OK, 62 s; Acidity passed |
 | `mac-integrate` from the official Inform.app 1.82 | OK, 6 s: 7 tools, 293 Internal files, 1134 documentation pages; `codesign --verify --deep --strict` passes |
 | A project compiled and played with only the tools and `Internal` inside the new app | Passed; banner shows Inform 7 v10.2.0 |
-| The new app launched and used through its GUI | Not yet verified |
+| The new app launched and used through its GUI | Worked in a hands-on check; no problems seen |
 
 ## Feeding the build into the Windows IDE
 
