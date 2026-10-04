@@ -113,7 +113,7 @@ Or step by step:
 | `python build.py ide-libs` | Windows: fetches the IDE's third-party libraries and helper repos; see below | download-bound |
 | `python build.py ide` | Windows: compiles `Inform.exe` with MSBuild from Visual Studio Build Tools | 4 min |
 | `python build.py ide-interpreters` | Windows: clones Frotz, Glulxe and Git and builds the Story-tab interpreters | 1 min |
-| `python build.py uninstall` | macOS: removes the `mac-integrate` app and its state, and the source clones, after asking; see "Uninstall" | instant |
+| `python build.py uninstall` | Removes what the builder made outside its folder: on Windows the IDE outputs, libraries and junctions; on macOS the `mac-integrate` app; and the source clones. Asks first; see "Uninstall" | instant |
 | `python build.py shell` | Opens a shell in the sources folder with `INFORM_WORK` set, and on Windows the toolchain on PATH | |
 | `python build.py env` | Prints lines that set `INFORM_WORK`, and on Windows put the toolchain on PATH, for your shell (`--ps`, `--cmd`, or POSIX). On macOS and Linux: `eval "$(python build.py env)"` | |
 
@@ -486,32 +486,46 @@ app in Finder and run the command again.
 
 ## Uninstall
 
-On macOS, first let `build.py` remove what it made outside its own folder:
+`build.py` can remove what it made outside its own folder. It lists every path
+with its size and asks before deleting anything (`--yes` skips the question).
 
 ```
-python build.py uninstall           # the app and the sources; same as `uninstall all`
-python build.py uninstall app       # only the mac-integrate app and its state
-python build.py uninstall sources   # only the inweb, intest and inform clones
+python build.py uninstall            # everything below; same as `uninstall all`
+python build.py uninstall ide        # Windows: what integrate, ide-libs, ide and ide-interpreters made
+python build.py uninstall app        # macOS: the mac-integrate app and its state
+python build.py uninstall sources    # the inweb, intest and inform clones
 ```
 
-It lists every path with its size and asks before deleting anything (`--yes`
-skips the question). What it removes:
+What each scope removes:
 
-- `app`: each app in `~/Applications` or `/Applications` with the
+- `ide` (Windows): the `Libraries` folder beside the sources' parent, the Glk,
+  Frotz, Git and Glulxe helper clones, the three junctions in the IDE's
+  `Distribution` folder (the junctions only; the sources they point at are
+  kept), the generated output in the IDE checkout (`Build\Compilers`,
+  `Build\Internal`, the generated documentation, `Build\Interpreters`,
+  `Inform.exe` and the CEF runtime files, the `ReleaseX64` intermediates and
+  `Build.h`), and the one source patch, which is reverted with `git checkout`.
+  Inside the IDE checkout it deletes only files git ignores under those
+  folders, so nothing tracked is touched and the checkout itself stays. It
+  refuses while `Inform.exe` is running.
+- `app` (macOS): each app in `~/Applications` or `/Applications` with the
   `mac-integrate` bundle identifier (`--bundle-id` if you changed it), and the
   preferences, caches, WebKit and HTTP storage macOS keeps under that same
   identifier. Matching is by exact identifier, so the official Inform.app and
   its settings are never touched. Quit the app first; it refuses while the app
   is running.
 - `sources`: the `inweb`, `intest` and `inform` clones in the work folder, then
-  the folder itself if nothing else is in it. If a clone has changed files,
-  commits that are on no remote, or stashes, it lists them and stops, unless
-  you pass `--force`. The two files every build rewrites
-  (`inweb/Tangled/inweb.c`, `intest/inprint/inprint.mk`) don't count.
+  the folder itself if nothing else is in it.
 
-It never touches `~/Library/Inform`, which the official app shares, or your
-own projects. An app made with `mac-integrate --out` somewhere other than
-those two folders isn't found; delete it in Finder.
+Before deleting any clone, it checks for changed files, commits that are on no
+remote, and stashes; if it finds any it lists them and stops, unless you pass
+`--force`. The files every build rewrites (`inweb/Tangled/inweb.c`,
+`intest/inprint/inprint.mk`) and the libraries `ide-libs` downloaded into the
+`Libraries` clone don't count.
 
-Then delete the `inform-builder` folder. On Windows, delete the
-`inform-builder` folder; that is all.
+It never touches `~/Library/Inform` on macOS, the IDE checkout's tracked files,
+or your own projects. An app made with `mac-integrate --out` somewhere other
+than `~/Applications` or `/Applications` isn't found; delete it in Finder.
+
+The toolchain lives inside `inform-builder\toolchain`, so the last step on any
+platform is the same: delete the `inform-builder` folder.

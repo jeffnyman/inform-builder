@@ -34,12 +34,17 @@ Commands:
                     Tools (toolset forced to the one installed, e.g. v143).
   ide-interpreters  (Windows) Clone the Frotz, Glulxe and Git repos and build the
                     Story-tab interpreters into Build/Interpreters.
-  uninstall [app|sources|all]
-                    (macOS) Remove what this builder made: the mac-integrate app and
-                    its preferences and caches, and/or the inweb, intest and inform
-                    clones in the work folder. Lists everything and asks first
-                    (--yes skips that). Refuses if a clone holds changes or commits
-                    found nowhere else, unless --force. Never touches ~/Library/Inform.
+  uninstall [ide|app|sources|all]
+                    Remove what this builder made outside its own folder, after
+                    listing it and asking (--yes skips that). On Windows, `ide` is
+                    everything integrate, ide-libs, ide and ide-interpreters made:
+                    the Libraries folder, the Glk/Frotz/Git/Glulxe clones, the
+                    Distribution junctions, the IDE's generated Build output and
+                    intermediates, and the one source patch. On macOS, `app` is the
+                    mac-integrate app and its state. `sources` is the inweb, intest
+                    and inform clones; it refuses if a clone holds changes or
+                    commits found nowhere else, unless --force. The toolchain lives
+                    inside this folder: delete the folder to remove it.
   shell [--posix]   Open a shell in the work folder with INFORM_WORK set, and on
                     Windows the toolchain on PATH.
   env [--ps|--cmd]  Print lines that set INFORM_WORK, and on Windows put the
@@ -58,6 +63,7 @@ import os
 import platform
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -674,9 +680,11 @@ def size_of(path):
     )
 
 
-def unsaved_work(repo, name):
-    """Local changes or commits that exist nowhere else, as lines to show."""
+def unsaved_work(repo, name, ignore=frozenset()):
+    """Local changes or commits that exist nowhere else, as lines to show.
+    `ignore` holds top-level names the builder itself put there (downloads)."""
     found = []
+    touched = BUILD_TOUCHED.get(name, set())
     # Not git(), which strips the output and so shifts the first line's columns.
     status = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain"],
@@ -686,8 +694,9 @@ def unsaved_work(repo, name):
     ).stdout
     for line in status.splitlines():
         path = line[3:]
-        if path not in BUILD_TOUCHED[name]:
-            found.append(f"changed: {path}")
+        if path in touched or path.rstrip("/") in ignore:
+            continue
+        found.append(f"changed: {path}")
     commits = git(repo, "log", "--oneline", "HEAD", "--branches", "--not", "--remotes")
     found += [f"commit not on any remote: {c}" for c in (commits or "").splitlines()]
     stashes = git(repo, "stash", "list") or ""
@@ -695,15 +704,100 @@ def unsaved_work(repo, name):
     return found
 
 
-def cmd_uninstall(work, plat, what, bundle_id, yes, force):
-    if platform.system() != "Darwin":
-        die("uninstall is not yet supported on this platform")
-    if what not in ("app", "sources", "all"):
-        die("usage: python build.py uninstall [app|sources|all] [--yes] [--force]")
-    bundle_id = bundle_id or MAC_BUNDLE_ID
-    remove = []
+def is_junction(p):
+    """A Windows directory junction (not a symlink, so Path.is_symlink misses it)."""
+    try:
+        return p.is_junction()  # Python 3.12+
+    except AttributeError:
+        try:
+            return bool(
+                os.lstat(p).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+            )
+        except (OSError, AttributeError):
+            return False
 
-    if what in ("app", "all"):
+
+def git_ignored_under(repo, roots):
+    """Files and folders git treats as ignored under the given roots: the
+    generated output, never anything tracked."""
+    out = subprocess.run(
+        [
+            "git", "-C", str(repo), "ls-files", "-o", "-i",
+            "--exclude-standard", "--directory", "--",
+        ]
+        + roots,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    return [repo / line.rstrip("/") for line in out.splitlines() if line.strip()]
+
+
+def windows_ide_removals(work, ide, force):
+    """Everything the Windows IDE commands made, as (path, kind) pairs."""
+    items = []
+    if not ide.is_dir():
+        return items
+    root = ide.parent.parent
+
+    # Junctions in Distribution, created by integrate. A real folder there is
+    # someone's own clone and is left alone.
+    for name in ("inweb", "intest", "inform"):
+        link = ide / "Distribution" / name
+        if is_junction(link):
+            items.append((link, "junction"))
+
+    # Generated output and intermediates inside the IDE checkout: only what git
+    # ignores under the folders the builder wrote to, so tracked files survive.
+    roots = [
+        "Build", "Inform7/ReleaseX64", "Inform7/DebugX64", "Inform7/Build.h",
+        "BuildDate/ReleaseX64", "BuildDate/DebugX64", "Interpreters",
+    ]
+    for p in git_ignored_under(ide, roots):
+        items.append((p, "path"))
+
+    # The guarded source patch applied by `ide`.
+    for rel, _old, new in IDE_COMPAT_PATCHES:
+        f = ide / rel
+        if f.exists() and new in f.read_text(encoding="utf-8"):
+            items.append((f, "revert"))
+
+    # Helper clones beside the sources, and the Libraries folder beside the root.
+    clones = [(ide.parent / "Glk", "Glk")]
+    for _proj, _url, rel, _marker in IDE_INTERPRETERS:
+        clones.append((ide.parent / rel, rel))
+    clones.append((root / "Libraries", "Libraries"))
+    downloaded = set(IDE_LIB_VERSIONS) | {"minimp3"}
+    for path, label in clones:
+        if not path.is_dir():
+            continue
+        if (path / ".git").exists():
+            ignore = downloaded if label == "Libraries" else set()
+            problems = unsaved_work(path, label, ignore)
+            if problems and not force:
+                print(f"{path} has work that exists nowhere else:")
+                for line in problems:
+                    print(f"  {line}")
+                die("not removing it; save that work, or pass --force")
+        items.append((path, "path"))
+        # Glulxe/Generic lives inside a Glulxe folder the builder made.
+        if path.name == "Generic" and path.parent.name == "Glulxe":
+            items.append((path.parent, "empty-parent"))
+    return items
+
+
+def cmd_uninstall(work, plat, what, ide, bundle_id, yes, force):
+    on_mac = platform.system() == "Darwin"
+    scopes = ("app", "sources", "all") if on_mac else ("ide", "sources", "all")
+    if what not in scopes:
+        die(f"usage: python build.py uninstall [{'|'.join(scopes)}] [--yes] [--force]")
+    if not on_mac and not IS_WINDOWS and what != "sources":
+        die("uninstall ide/app is for Windows and macOS; `uninstall sources` works here")
+
+    remove = []  # (path, kind): "path", "junction", "revert" or "empty-parent"
+
+    if on_mac and what in ("app", "all"):
+        bundle_id = bundle_id or MAC_BUNDLE_ID
         apps = find_mac_apps(bundle_id)
         commands = subprocess.run(
             ["ps", "-axo", "command="], capture_output=True, text=True, check=False
@@ -711,12 +805,23 @@ def cmd_uninstall(work, plat, what, bundle_id, yes, force):
         for app in apps:
             if any(c.startswith(f"{app}/Contents/") for c in commands):
                 die(f"{app} is running; quit it first")
-        remove += apps
+        remove += [(a, "path") for a in apps]
         remove += [
-            p
+            (p, "path")
             for p in (Path.home() / s.format(id=bundle_id) for s in MAC_APP_STATE)
             if p.exists()
         ]
+
+    if IS_WINDOWS and what in ("ide", "all"):
+        ide = Path(ide) if ide else work / "Windows-Inform7"
+        if (ide / "Build" / "Inform.exe").exists():
+            running = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Inform.exe", "/NH"],
+                capture_output=True, text=True, check=False,
+            ).stdout
+            if "Inform.exe" in running:
+                die("Inform.exe is running; quit it first")
+        remove += windows_ide_removals(work, ide, force)
 
     if what in ("sources", "all"):
         repos = [work / n for n in BUILD_TOUCHED if (work / n).is_dir()]
@@ -728,18 +833,31 @@ def cmd_uninstall(work, plat, what, bundle_id, yes, force):
                 for line in lines:
                     print(f"  {line}")
             die("not removing the sources; save that work, or pass --force")
-        remove += repos
+        remove += [(r, "path") for r in repos]
 
     if not remove:
         say("Nothing to remove")
         return
 
     say("Will remove")
-    for p in remove:
-        print(f"  {p}  ({size_of(p) / 1e6:.1f} MB)")
-    print(
-        "\nNot touched: ~/Library/Inform (shared with the official app), your projects."
-    )
+    total = 0.0
+    for p, kind in remove:
+        if kind == "junction":
+            print(f"  {p}  (junction only; its target is kept)")
+        elif kind == "revert":
+            print(f"  {p}  (revert the builder's source patch with git checkout)")
+        elif kind == "empty-parent":
+            print(f"  {p}  (if empty afterwards)")
+        else:
+            mb = size_of(p) / 1e6
+            total += mb
+            print(f"  {p}  ({mb:.1f} MB)")
+    print(f"\n  about {total:.0f} MB in all")
+    if on_mac:
+        kept = "~/Library/Inform (shared with the official app)"
+    else:
+        kept = "the IDE checkout's tracked files, the toolchain in this folder"
+    print(f"Not touched: {kept}, your projects.")
     if not yes:
         if not sys.stdin.isatty():
             die("not a terminal; pass --yes to remove without asking")
@@ -753,27 +871,56 @@ def cmd_uninstall(work, plat, what, bundle_id, yes, force):
             return
 
     # cfprefsd caches preferences and can write a deleted plist back.
-    if what in ("app", "all"):
+    if on_mac and what in ("app", "all"):
         subprocess.run(["defaults", "delete", bundle_id], capture_output=True)
-    for p in remove:
+    for p, kind in remove:
         try:
-            if p.is_dir() and not p.is_symlink():
-                shutil.rmtree(p)
+            if kind == "junction":
+                os.rmdir(p)  # unlinks the junction only; rmtree would follow it
+            elif kind == "revert":
+                subprocess.run(
+                    ["git", "-C", str(p.parent), "checkout", "--", p.name],
+                    check=True, capture_output=True,
+                )
+            elif kind == "empty-parent":
+                if p.is_dir() and not any(p.iterdir()):
+                    p.rmdir()
+                else:
+                    continue
+            elif p.is_dir() and not p.is_symlink() and not is_junction(p):
+                rmtree_force(p)
             else:
                 p.unlink()
-        except OSError as e:
-            die(
-                f"could not remove {p}: {e}\nIf this is 'Operation not permitted', give "
-                "your terminal App Management access in System Settings > Privacy & "
-                "Security, or delete it in Finder"
-            )
-        print(f"  removed {p}")
+        except (OSError, subprocess.CalledProcessError) as e:
+            hint = ""
+            if on_mac:
+                hint = (
+                    "\nIf this is 'Operation not permitted', give your terminal App "
+                    "Management access in System Settings > Privacy & Security, or "
+                    "delete it in Finder"
+                )
+            die(f"could not remove {p}: {e}{hint}")
+        verb = {"junction": "unlinked", "revert": "reverted", "empty-parent": "removed (was empty)"}.get(kind, "removed")
+        print(f"  {verb} {p}")
     # The work folder goes too, but only if nothing else was kept in it.
     if what in ("sources", "all") and work.is_dir() and not any(work.iterdir()):
         work.rmdir()
         print(f"  removed {work} (now empty)")
     elif what in ("sources", "all") and work.is_dir():
         print(f"  kept {work}: it holds other files")
+
+
+def rmtree_force(path):
+    """shutil.rmtree, clearing the read-only bit git sets on pack files on Windows."""
+
+    def on_error(func, failed, _exc):
+        os.chmod(failed, stat.S_IWRITE)
+        func(failed)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=on_error)
+    else:
+        shutil.rmtree(path, onerror=on_error)
 
 
 # --- Windows IDE: third-party libraries and MSBuild -------------------------
@@ -1452,7 +1599,7 @@ def main(argv):
     elif cmd == "mac-integrate":
         cmd_mac_integrate(work, plat, app, out, name, bundle_id)
     elif cmd == "uninstall":
-        cmd_uninstall(work, plat, params[0] if params else "all", bundle_id, yes, force)
+        cmd_uninstall(work, plat, params[0] if params else "all", ide, bundle_id, yes, force)
     elif cmd == "ide-libs":
         cmd_ide_libs(work, plat, ide)
     elif cmd == "ide":
