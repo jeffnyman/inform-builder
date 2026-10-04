@@ -53,9 +53,15 @@ On Linux and macOS no toolchain is downloaded. The system `clang`, `make` and
 - Only for compiling the Windows IDE (`ide` command): Visual Studio Build Tools
   2022 or 2026 with MFC, plus about 1.5 GB more for libraries. See
   "Compiling the IDE itself" below.
-- Only for `mac-integrate`: the official Mac Inform app installed, normally at
-  `/Applications/Inform.app`. The Xcode command-line tools are enough; full
-  Xcode is not needed.
+- Only for `mac-integrate`: a copy of the official Mac Inform app, normally
+  installed at `/Applications/Inform.app`. `mac-integrate` does not build the
+  app; it copies it and swaps in your compilers, `Internal` and documentation,
+  so the interface itself is the official app's. It need not be installed:
+  `--app PATH` takes the app from anywhere, such as the mounted download
+  (`--app "/Volumes/<disk image>/Inform.app"`). The Xcode command-line tools
+  are enough; full Xcode is not needed. Building and using Inform from the
+  terminal (`all`, `test`, `inform.py compile` and `play`) doesn't need the
+  app at all.
 
 ## Layout
 
@@ -437,8 +443,10 @@ open ~/Applications/"Inform 10.2.app"
    `mac-integrate` build at that path is replaced; any other app there is left
    alone and the command stops.
 
-Leave the official app installed: it is the source of the copy, and your
-fallback. Things to know when running both:
+The copy is self-contained: it loads nothing from the official app, so it
+keeps working if you remove that. Keeping it is still worthwhile, as your
+fallback and as the source for the next `mac-integrate` after a new build.
+Things to know when running both:
 
 - Both read `~/Library/Inform`, so an extension installed from one is seen by
   the other. The path is fixed in the app, so back that folder up if you want
