@@ -120,9 +120,15 @@ class Tools:
             self.ide_exe = find_mac_app()
         else:
             self.ide_exe = ide / "Build" / f"Inform{EXE}"
-        # The IDE passes -external <Documents>\Inform; use it if the folder exists.
-        docs = Path.home() / "Documents" / "Inform"
-        self.external = docs if docs.is_dir() else None
+        # The IDE passes -external with its folder of installed extensions and
+        # generated documentation: <Documents>\Inform on Windows, ~/Library/Inform
+        # for the Mac app. Use the same one if it exists, so a compile here sees
+        # the extensions installed through the IDE.
+        if sys.platform == "darwin":
+            self.external_path = Path.home() / "Library" / "Inform"
+        else:
+            self.external_path = Path.home() / "Documents" / "Inform"
+        self.external = self.external_path if self.external_path.is_dir() else None
 
     def need(self, name):
         p = self.exe.get(name)
@@ -162,9 +168,8 @@ def cmd_where(t):
         print(f"  {'IDE':10} {t.ide_exe}  {state}")
     else:
         print(f"  {'IDE':10} (no mac-integrate app in ~/Applications or /Applications)")
-    print(
-        f"  {'external':10} {t.external or '(none; ~/Documents/Inform does not exist)'}"
-    )
+    missing = f"(none; {t.external_path} does not exist)"
+    print(f"  {'external':10} {t.external or missing}")
 
 
 def cmd_ide(t, args):
