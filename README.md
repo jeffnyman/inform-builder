@@ -113,6 +113,7 @@ Or step by step:
 | `python build.py ide-libs` | Windows: fetches the IDE's third-party libraries and helper repos; see below | download-bound |
 | `python build.py ide` | Windows: compiles `Inform.exe` with MSBuild from Visual Studio Build Tools | 4 min |
 | `python build.py ide-interpreters` | Windows: clones Frotz, Glulxe and Git and builds the Story-tab interpreters | 1 min |
+| `python build.py uninstall` | macOS: removes the `mac-integrate` app and its state, and the source clones, after asking; see "Uninstall" | instant |
 | `python build.py shell` | Opens a shell in the sources folder with `INFORM_WORK` set, and on Windows the toolchain on PATH | |
 | `python build.py env` | Prints lines that set `INFORM_WORK`, and on Windows put the toolchain on PATH, for your shell (`--ps`, `--cmd`, or POSIX). On macOS and Linux: `eval "$(python build.py env)"` | |
 
@@ -485,5 +486,32 @@ app in Finder and run the command again.
 
 ## Uninstall
 
-Delete the `inform-builder` folder. That is all. On macOS, also delete the
-app `mac-integrate` made (by default `~/Applications/Inform 10.2.app`).
+On macOS, first let `build.py` remove what it made outside its own folder:
+
+```
+python build.py uninstall           # the app and the sources; same as `uninstall all`
+python build.py uninstall app       # only the mac-integrate app and its state
+python build.py uninstall sources   # only the inweb, intest and inform clones
+```
+
+It lists every path with its size and asks before deleting anything (`--yes`
+skips the question). What it removes:
+
+- `app`: each app in `~/Applications` or `/Applications` with the
+  `mac-integrate` bundle identifier (`--bundle-id` if you changed it), and the
+  preferences, caches, WebKit and HTTP storage macOS keeps under that same
+  identifier. Matching is by exact identifier, so the official Inform.app and
+  its settings are never touched. Quit the app first; it refuses while the app
+  is running.
+- `sources`: the `inweb`, `intest` and `inform` clones in the work folder, then
+  the folder itself if nothing else is in it. If a clone has changed files,
+  commits that are on no remote, or stashes, it lists them and stops, unless
+  you pass `--force`. The two files every build rewrites
+  (`inweb/Tangled/inweb.c`, `intest/inprint/inprint.mk`) don't count.
+
+It never touches `~/Library/Inform`, which the official app shares, or your
+own projects. An app made with `mac-integrate --out` somewhere other than
+those two folders isn't found; delete it in Finder.
+
+Then delete the `inform-builder` folder. On Windows, delete the
+`inform-builder` folder; that is all.
