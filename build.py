@@ -20,22 +20,24 @@ Commands:
   inform [--first]  Build the core Inform tools (about 3.5 minutes).
   all               setup, inweb, intest, inform, then test.
   test [CASE|all]   Run one intest case (default: Acidity) or the whole suite.
-  integrate         Copy the built tools and resources into a Windows IDE checkout
-                    (Build/Compilers, Build/Internal, Build/Documentation). Uses
-                    --ide DIR, default <work>/Windows-Inform7.
-  mac-integrate     Copy the official Inform.app (--app PATH, default
+  integrate         (Windows) Copy the built tools and resources into a Windows IDE
+                    checkout (Build/Compilers, Build/Internal, Build/Documentation).
+                    Uses --ide DIR, default <work>/Windows-Inform7.
+  mac-integrate     (macOS) Copy the official Inform.app (--app PATH, default
                     /Applications/Inform.app) with the built tools, Internal and
                     documentation swapped in, renamed (--name, default e.g.
                     "Inform 10.2") with its own bundle identifier (--bundle-id),
                     signed ad hoc, into --out DIR (default ~/Applications).
-  ide-libs          Fetch the third-party libraries and helper repos that
+  ide-libs          (Windows) Fetch the third-party libraries and helper repos that
                     Inform7.exe needs, into the layout its project files expect.
-  ide               Build Inform.exe with MSBuild from Visual Studio Build Tools
-                    (toolset forced to the one installed, e.g. v143).
-  ide-interpreters  Clone the Frotz, Glulxe and Git repos and build the Story-tab
-                    interpreters into Build/Interpreters.
-  shell [--posix]   Open an interactive shell with the toolchain on PATH.
-  env [--ps|--cmd]  Print lines that put the toolchain on PATH in your shell.
+  ide               (Windows) Build Inform.exe with MSBuild from Visual Studio Build
+                    Tools (toolset forced to the one installed, e.g. v143).
+  ide-interpreters  (Windows) Clone the Frotz, Glulxe and Git repos and build the
+                    Story-tab interpreters into Build/Interpreters.
+  shell [--posix]   Open a shell in the work folder with INFORM_WORK set, and on
+                    Windows the toolchain on PATH.
+  env [--ps|--cmd]  Print lines that set INFORM_WORK, and on Windows put the
+                    toolchain on PATH, in your shell.
 
 Options:
   --work DIR        Folder holding inweb/, intest/, inform/ as siblings.
@@ -407,7 +409,14 @@ def link_dir(link, target):
     return "symlink"
 
 
+def windows_only(what):
+    if not IS_WINDOWS:
+        hint = "; on macOS use `mac-integrate`" if platform.system() == "Darwin" else ""
+        die(f"{what} is for the Windows IDE and only runs on Windows{hint}")
+
+
 def cmd_integrate(work, plat, ide):
+    windows_only("integrate")
     need_toolchain()
     for name in ("inweb", "intest", "inform"):
         need_repo(work, name)
@@ -736,6 +745,7 @@ def clone_if_missing(url, dest, marker):
 
 
 def cmd_ide_libs(work, plat, ide):
+    windows_only("ide-libs")
     ide = Path(ide) if ide else work / "Windows-Inform7"
     if not (ide / "Inform7" / "Inform7.sln").exists():
         die(f"no Windows IDE checkout at {ide}; pass --ide DIR")
@@ -953,8 +963,7 @@ IDE_INTERPRETERS = [
 
 
 def cmd_ide_interpreters(work, plat, ide, toolset):
-    if not IS_WINDOWS:
-        die("the Windows IDE interpreters can only be built on Windows")
+    windows_only("ide-interpreters")
     ide = Path(ide) if ide else work / "Windows-Inform7"
     if not (ide / "Interpreters" / "Interpreters.sln").exists():
         die(f"no Windows IDE checkout at {ide}; pass --ide DIR")
@@ -1006,8 +1015,7 @@ def cmd_ide_interpreters(work, plat, ide, toolset):
 
 
 def cmd_ide(work, plat, ide, toolset):
-    if not IS_WINDOWS:
-        die("the Windows IDE can only be built on Windows")
+    windows_only("ide")
     ide = Path(ide) if ide else work / "Windows-Inform7"
     sln = ide / "Inform7" / "Inform7.sln"
     if not sln.exists():
@@ -1163,7 +1171,9 @@ def cmd_doctor(work, plat):
 def cmd_env(work, plat, style):
     dirs = [str(d) for d in toolchain_dirs()]
     if not dirs:
-        print("# Nothing to do on this platform: system clang and make are used.")
+        # System clang and make are already on PATH; INFORM_WORK still carries
+        # a --work choice over to later build.py and inform.py runs.
+        print(f'export INFORM_WORK="{work}"')
         return
     if style == "ps":
         print('$env:PATH = "' + ";".join(dirs) + ';" + $env:PATH')
