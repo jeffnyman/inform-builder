@@ -34,6 +34,12 @@ Commands:
                     Tools (toolset forced to the one installed, e.g. v143).
   ide-interpreters  (Windows) Clone the Frotz, Glulxe and Git repos and build the
                     Story-tab interpreters into Build/Interpreters.
+  uninstall [app|sources|all]
+                    (macOS) Remove what this builder made: the mac-integrate app and
+                    its preferences and caches, and/or the inweb, intest and inform
+                    clones in the work folder. Lists everything and asks first
+                    (--yes skips that). Refuses if a clone holds changes or commits
+                    found nowhere else, unless --force. Never touches ~/Library/Inform.
   shell [--posix]   Open a shell in the work folder with INFORM_WORK set, and on
                     Windows the toolchain on PATH.
   env [--ps|--cmd]  Print lines that set INFORM_WORK, and on Windows put the
@@ -625,6 +631,149 @@ def cmd_mac_integrate(work, plat, app_src, out_dir, name, bundle_id):
         "It shares ~/Library/Inform (installed extensions and documentation) with the\n"
         "official app, so an extension installed in one is seen by the other."
     )
+
+
+# --- macOS: uninstall what this builder created -----------------------------
+
+# Files the builds always rewrite; they are not the user's work.
+BUILD_TOUCHED = {
+    "inweb": {"Tangled/inweb.c"},
+    "intest": {"inprint/inprint.mk"},
+    "inform": set(),
+}
+
+# Where a Mac app keeps per-user state, named after its bundle identifier. Only
+# exact names are matched, so the official app's own state is never touched.
+MAC_APP_STATE = [
+    "Library/Preferences/{id}.plist",
+    "Library/Caches/{id}",
+    "Library/HTTPStorages/{id}",
+    "Library/HTTPStorages/{id}.binarycookies",
+    "Library/WebKit/{id}",
+    "Library/Saved Application State/{id}.savedState",
+    "Library/Application Support/{id}",
+]
+
+
+def find_mac_apps(bundle_id):
+    return sorted(
+        app
+        for folder in (Path.home() / "Applications", Path("/Applications"))
+        for app in folder.glob("*.app")
+        if bundle_id_of(app) == bundle_id
+    )
+
+
+def size_of(path):
+    if path.is_file() or path.is_symlink():
+        return path.lstat().st_size
+    return sum(
+        (Path(root) / f).lstat().st_size
+        for root, _, files in os.walk(path)
+        for f in files
+    )
+
+
+def unsaved_work(repo, name):
+    """Local changes or commits that exist nowhere else, as lines to show."""
+    found = []
+    # Not git(), which strips the output and so shifts the first line's columns.
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    for line in status.splitlines():
+        path = line[3:]
+        if path not in BUILD_TOUCHED[name]:
+            found.append(f"changed: {path}")
+    commits = git(repo, "log", "--oneline", "HEAD", "--branches", "--not", "--remotes")
+    found += [f"commit not on any remote: {c}" for c in (commits or "").splitlines()]
+    stashes = git(repo, "stash", "list") or ""
+    found += [f"stash: {s}" for s in stashes.splitlines()]
+    return found
+
+
+def cmd_uninstall(work, plat, what, bundle_id, yes, force):
+    if platform.system() != "Darwin":
+        die("uninstall is not yet supported on this platform")
+    if what not in ("app", "sources", "all"):
+        die("usage: python build.py uninstall [app|sources|all] [--yes] [--force]")
+    bundle_id = bundle_id or MAC_BUNDLE_ID
+    remove = []
+
+    if what in ("app", "all"):
+        apps = find_mac_apps(bundle_id)
+        commands = subprocess.run(
+            ["ps", "-axo", "command="], capture_output=True, text=True, check=False
+        ).stdout.splitlines()
+        for app in apps:
+            if any(c.startswith(f"{app}/Contents/") for c in commands):
+                die(f"{app} is running; quit it first")
+        remove += apps
+        remove += [
+            p
+            for p in (Path.home() / s.format(id=bundle_id) for s in MAC_APP_STATE)
+            if p.exists()
+        ]
+
+    if what in ("sources", "all"):
+        repos = [work / n for n in BUILD_TOUCHED if (work / n).is_dir()]
+        problems = {r.name: unsaved_work(r, r.name) for r in repos}
+        problems = {k: v for k, v in problems.items() if v}
+        if problems and not force:
+            for name, lines in problems.items():
+                print(f"{work / name} has work that exists nowhere else:")
+                for line in lines:
+                    print(f"  {line}")
+            die("not removing the sources; save that work, or pass --force")
+        remove += repos
+
+    if not remove:
+        say("Nothing to remove")
+        return
+
+    say("Will remove")
+    for p in remove:
+        print(f"  {p}  ({size_of(p) / 1e6:.1f} MB)")
+    print(
+        "\nNot touched: ~/Library/Inform (shared with the official app), your projects."
+    )
+    if not yes:
+        if not sys.stdin.isatty():
+            die("not a terminal; pass --yes to remove without asking")
+        try:
+            answer = input("Remove these? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+            print()
+        if answer not in ("y", "yes"):
+            print("Nothing removed.")
+            return
+
+    # cfprefsd caches preferences and can write a deleted plist back.
+    if what in ("app", "all"):
+        subprocess.run(["defaults", "delete", bundle_id], capture_output=True)
+    for p in remove:
+        try:
+            if p.is_dir() and not p.is_symlink():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+        except OSError as e:
+            die(
+                f"could not remove {p}: {e}\nIf this is 'Operation not permitted', give "
+                "your terminal App Management access in System Settings > Privacy & "
+                "Security, or delete it in Finder"
+            )
+        print(f"  removed {p}")
+    # The work folder goes too, but only if nothing else was kept in it.
+    if what in ("sources", "all") and work.is_dir() and not any(work.iterdir()):
+        work.rmdir()
+        print(f"  removed {work} (now empty)")
+    elif what in ("sources", "all") and work.is_dir():
+        print(f"  kept {work}: it holds other files")
 
 
 # --- Windows IDE: third-party libraries and MSBuild -------------------------
@@ -1228,6 +1377,7 @@ def main(argv):
     ide = None
     toolset = None
     app = out = name = bundle_id = None
+    yes = force = False
     rest = []
     i = 0
     while i < len(args):
@@ -1256,6 +1406,10 @@ def main(argv):
         elif a == "--bundle-id":
             i += 1
             bundle_id = args[i]
+        elif a == "--yes":
+            yes = True
+        elif a == "--force":
+            force = True
         elif a == "--first":
             first = True
         elif a == "--ps":
@@ -1297,6 +1451,8 @@ def main(argv):
         cmd_integrate(work, plat, ide)
     elif cmd == "mac-integrate":
         cmd_mac_integrate(work, plat, app, out, name, bundle_id)
+    elif cmd == "uninstall":
+        cmd_uninstall(work, plat, params[0] if params else "all", bundle_id, yes, force)
     elif cmd == "ide-libs":
         cmd_ide_libs(work, plat, ide)
     elif cmd == "ide":
